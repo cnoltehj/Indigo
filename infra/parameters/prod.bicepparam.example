@@ -1,0 +1,19 @@
+using '../main.bicep'
+
+param environment = 'prod'
+param location = 'uksouth'
+param sqlAdministratorLogin = 'indigoclaimsadmin'
+param appServiceSku = 'P1v3'
+param sqlDatabaseSkuName = 'S1'
+
+param tags = {
+  environment: 'prod'
+  application: 'claims-intake'
+  owner: 'claims-platform'
+  managedBy: 'bicep'
+  dataClass: 'confidential'
+  costCentre: 'insurance-claims'
+}
+
+// Example only. Production secrets are supplied by an Indigo-controlled
+// secret store/variable group and are never committed to Git.

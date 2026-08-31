@@ -1,0 +1,131 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  # Replace these values with Indigo Azure DevOps service connections/resource groups.
+  devServiceConnection: 'indigo-claims-dev-sc'
+  prodServiceConnection: 'indigo-claims-prod-sc'
+  devResourceGroup: 'indigo-claims-rg-dev-uks'
+  prodResourceGroup: 'indigo-claims-rg-prod-uks'
+
+stages:
+- stage: Build
+  displayName: 'Build and validate baseline'
+  jobs:
+  - job: Validate
+    displayName: 'Quality and IaC validation'
+    steps:
+    - checkout: self
+
+    - script: |
+        echo "Application unit tests would run here when application code is added."
+        echo "Static analysis/security scanning integration point."
+      displayName: 'Quality gate placeholders'
+
+    - task: AzureCLI@2
+      displayName: 'Lint and compile Bicep'
+      inputs:
+        azureSubscription: $(devServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az bicep lint --file infra/main.bicep
+          mkdir -p $(Build.ArtifactStagingDirectory)/infra
+          az bicep build \
+            --file infra/main.bicep \
+            --outfile $(Build.ArtifactStagingDirectory)/infra/main.json
+          cp -R infra/parameters $(Build.ArtifactStagingDirectory)/infra/parameters
+
+    - publish: $(Build.ArtifactStagingDirectory)/infra
+      artifact: infrastructure
+      displayName: 'Publish immutable IaC artifact'
+
+- stage: DeployDev
+  displayName: 'Deploy DEV'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: DeployDevBaseline
+    displayName: 'Deploy DEV baseline'
+    environment: 'claims-dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: infrastructure
+
+          - task: AzureCLI@2
+            displayName: 'Validate and deploy DEV'
+            inputs:
+              azureSubscription: $(devServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az deployment group validate \
+                  --resource-group $(devResourceGroup) \
+                  --template-file $(Pipeline.Workspace)/infrastructure/main.json \
+                  --parameters environment=dev \
+                               location=uksouth \
+                               sqlAdministratorLogin=indigoclaimsadmin \
+                               appServiceSku=B1 \
+                               sqlDatabaseSkuName=Basic \
+                               sqlAdministratorPassword="$(sqlAdminPassword)" \
+                               tags='{"environment":"dev","application":"claims-intake","owner":"claims-platform","managedBy":"bicep","dataClass":"confidential","costCentre":"insurance-claims"}'
+
+                az deployment group create \
+                  --name claims-dev-$(Build.BuildId) \
+                  --resource-group $(devResourceGroup) \
+                  --template-file $(Pipeline.Workspace)/infrastructure/main.json \
+                  --parameters environment=dev \
+                               location=uksouth \
+                               sqlAdministratorLogin=indigoclaimsadmin \
+                               appServiceSku=B1 \
+                               sqlDatabaseSkuName=Basic \
+                               sqlAdministratorPassword="$(sqlAdminPassword)" \
+                               tags='{"environment":"dev","application":"claims-intake","owner":"claims-platform","managedBy":"bicep","dataClass":"confidential","costCentre":"insurance-claims"}'
+
+- stage: PromoteProd
+  displayName: 'Controlled Production promotion'
+  dependsOn: DeployDev
+  condition: succeeded()
+  jobs:
+  - deployment: DeployProdBaseline
+    displayName: 'Deploy production baseline'
+    # Configure Indigo-owned Approvals and Checks on this Environment in Azure DevOps.
+    environment: 'claims-prod'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: infrastructure
+
+          - task: AzureCLI@2
+            displayName: 'Deploy PROD from the same validated artifact'
+            inputs:
+              azureSubscription: $(prodServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az deployment group create \
+                  --name claims-prod-$(Build.BuildId) \
+                  --resource-group $(prodResourceGroup) \
+                  --template-file $(Pipeline.Workspace)/infrastructure/main.json \
+                  --parameters environment=prod \
+                               location=uksouth \
+                               sqlAdministratorLogin=indigoclaimsadmin \
+                               appServiceSku=P1v3 \
+                               sqlDatabaseSkuName=S1 \
+                               sqlAdministratorPassword="$(sqlAdminPassword)" \
+                               tags='{"environment":"prod","application":"claims-intake","owner":"claims-platform","managedBy":"bicep","dataClass":"confidential","costCentre":"insurance-claims"}'
