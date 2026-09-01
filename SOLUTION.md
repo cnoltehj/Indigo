@@ -14,7 +14,7 @@ The optional .NET implementation in this repository is only an in-memory stub us
 
 > **Governance principle: vendors implement within the baseline; Indigo retains ownership of the guardrails and production release authority.**
 
-## 2. Target Azure shape
+## 2. Target Azure Architecture
 
 ```text
 Customer / Agent
